@@ -3,8 +3,7 @@ import { Amm } from "../types/ethers"
 import { ERC20Service } from "./ERC20Service"
 import { EthMetadata, SystemMetadataFactory } from "./SystemMetadataFactory"
 import { EthService } from "./EthService"
-import { FtxService, FtxPosition, PlaceOrderPayload } from "./FtxService"
-import { isNumber } from "lodash"
+import { FtxService, PlaceOrderPayload } from "./FtxService"
 import { Log } from "./Log"
 import { MaxUint256 } from "@ethersproject/constants"
 import { Mutex } from "async-mutex"
@@ -24,7 +23,6 @@ export class Arbitrageur {
     private readonly arbitrageur: Wallet
     private readonly ftxClient: any
 
-    private ftxPositionsMap!: Record<string, FtxPosition>
     private nextNonce!: number
     private perpfiBalance = Big(0)
     private ftxAccountValue = Big(0)
@@ -140,8 +138,6 @@ export class Arbitrageur {
         }
 
         this.ftxAccountValue = ftxAccountInfo.totalAccountValue
-
-        this.ftxPositionsMap = ftxAccountInfo.positionsMap
 
         const ftxTotalPnlMaps = await this.ftxService.getTotalPnLs(this.ftxClient)
         for (const marketKey in ftxTotalPnlMaps) {
@@ -270,7 +266,7 @@ export class Arbitrageur {
         })
 
         // List FTX positions
-        const ftxPosition = this.ftxPositionsMap[ammConfig.FTX_MARKET_ID]
+        const ftxPosition = await this.ftxService.getPosition(this.ftxClient, ammConfig.FTX_MARKET_ID)
         if (ftxPosition) {
             const ftxSizeDiff = ftxPosition.netSize.abs().sub(position.size.abs())
             this.log.jinfo({

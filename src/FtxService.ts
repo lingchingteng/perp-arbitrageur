@@ -43,6 +43,26 @@ export class FtxService {
         }
     }
 
+    async getPosition(ftxClient: any, marketId: string): Promise<FtxPosition> {
+        const data = await ftxClient.request({
+            method: "GET",
+            path: "/positions",
+        })
+        this.log.jinfo({
+            event: "GetPositions",
+            params: data,
+        })
+        const positions: Record<string, FtxPosition> = {}
+        for (let i = 0; i < data.result.length; i++) {
+            const positionEntity = data.result[i]
+            if (positionEntity.future === marketId) {
+                const position = this.toFtxPosition(positionEntity)
+                positions[position.future] = position
+            }
+        }
+        return positions[marketId]
+    }
+
     async getTotalPnLs(ftxClient: any): Promise<Record<string, number>> {
         const data = await ftxClient.request({
             method: "GET",
