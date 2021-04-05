@@ -62,7 +62,7 @@ export const ammConfigMap = {
         PERPFI_LEVERAGE: Big(2), // You may adjust it based on your own risk.
         PERPFI_MIN_TRADE_NOTIONAL: Big(10), 
         PERPFI_SHORT_ENTRY_TRIGGER: Big(0.5).div(100), // open the short position at Perp exchange when the spread is >= 0.5 % 
-        PERPFI_LONG_ENTRY_TRIGGER: Big(-0.5).div(100), // open the long position at Perp excahnge when the spread is =< -0.5%
+        PERPFI_LONG_ENTRY_TRIGGER: Big(-0.5).div(100), // open the long position at Perp exchange when the spread is =< -0.5%
         MAX_SLIPPAGE_RATIO: Big(0.001), // set the max slippage ratio limit to avoid large slippage 
         FTX_MARKET_ID: "BTC-PERP",
         FTX_MIN_TRADE_SIZE: Big(0.001), 
