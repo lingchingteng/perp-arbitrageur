@@ -13,7 +13,7 @@
         "deploy": "npm run build && sls deploy --aws-s3-accelerate --stage production"
     },
     "author": "",
-    "license": "ISC",
+    "license": "BSD-3-Clause",
     "dependencies": {
         "@perp/contract": "1.0.4",
         "async-mutex": "0.2.6",
