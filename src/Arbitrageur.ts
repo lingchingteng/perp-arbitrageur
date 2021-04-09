@@ -296,16 +296,28 @@ export class Arbitrageur {
         // Adjust Perpetual Protocol margin
         if (!position.size.eq(0)) {
             const marginRatio = await this.perpService.getMarginRatio(amm.address, arbitrageurAddr)
+            // note positionNotional is an estimation because the real margin ratio is calculated based on two mark price candidates: SPOT & TWAP.
+            // we pick the more "conservative" one (SPOT) here so the margin required tends to fall on the safer side
+            const {
+                positionNotional: spotPositionNotional,
+            } = await this.perpService.getPositionNotionalAndUnrealizedPnl(
+                amm.address,
+                this.arbitrageur.address,
+                PnlCalcOption.SPOT_PRICE,
+            )
             this.log.jinfo({
                 event: "MarginRatioBefore",
                 params: {
+                    marginRatio: +marginRatio,
+                    spotPositionNotional: +spotPositionNotional,
                     ammPair,
-                    marginRatio: marginRatio.toFixed(),
                 },
             })
             const expectedMarginRatio = new Big(1).div(ammConfig.PERPFI_LEVERAGE)
             if (marginRatio.gt(expectedMarginRatio.mul(new Big(1).add(ammConfig.ADJUST_MARGIN_RATIO_THRESHOLD)))) {
-                let marginToBeRemoved = marginRatio.sub(expectedMarginRatio).mul(position.openNotional)
+                // marginToBeRemoved = -marginToChange
+                //                   = (marginRatio - expectedMarginRatio) * positionNotional
+                let marginToBeRemoved = marginRatio.sub(expectedMarginRatio).mul(spotPositionNotional)
 
                 // cap the reduction by the current (funding payment realized) margin
                 if (marginToBeRemoved.gt(position.margin)) {
@@ -346,8 +358,8 @@ export class Arbitrageur {
                 marginRatio.lt(expectedMarginRatio.mul(new Big(1).sub(ammConfig.ADJUST_MARGIN_RATIO_THRESHOLD)))
             ) {
                 // marginToBeAdded = marginToChange
-                //                 = (expectedMarginRatio - marginRatio) * openNotional
-                let marginToBeAdded = expectedMarginRatio.sub(marginRatio).mul(position.openNotional)
+                //                 = (expectedMarginRatio - marginRatio) * positionNotional
+                let marginToBeAdded = expectedMarginRatio.sub(marginRatio).mul(spotPositionNotional)
                 marginToBeAdded = marginToBeAdded.gt(quoteBalance) ? quoteBalance : marginToBeAdded
                 this.log.jinfo({
                     event: "AddMargin",

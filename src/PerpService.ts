@@ -163,6 +163,22 @@ export class PerpService {
         return PerpService.fromWei((await clearingHouse.functions.getMarginRatio(ammAddr, traderAddr))[0].d)
     }
 
+    async getPositionNotionalAndUnrealizedPnl(
+        ammAddr: string,
+        traderAddr: string,
+        pnlCalcOption: PnlCalcOption,
+    ): Promise<{
+        positionNotional: Big
+        unrealizedPnl: Big
+    }> {
+        const clearingHouse = await this.createClearingHouse()
+        const ret = await clearingHouse.getPositionNotionalAndUnrealizedPnl(ammAddr, traderAddr, pnlCalcOption)
+        return {
+            positionNotional: PerpService.fromWei(ret.positionNotional.d),
+            unrealizedPnl: PerpService.fromWei(ret.unrealizedPnl.d),
+        }
+    }
+
     async openPosition(
         trader: Wallet,
         ammAddr: string,
