@@ -323,7 +323,7 @@ export class Arbitrageur {
                 if (marginToBeRemoved.gt(position.margin)) {
                     marginToBeRemoved = position.margin
                 }
-                if (marginToBeRemoved.gt(Big(0))) {
+                if (marginToBeRemoved.round(6, 0).gt(Big(0))) {
                     this.log.jinfo({
                         event: "RemoveMargin",
                         params: {
@@ -361,33 +361,35 @@ export class Arbitrageur {
                 //                 = (expectedMarginRatio - marginRatio) * positionNotional
                 let marginToBeAdded = expectedMarginRatio.sub(marginRatio).mul(spotPositionNotional)
                 marginToBeAdded = marginToBeAdded.gt(quoteBalance) ? quoteBalance : marginToBeAdded
-                this.log.jinfo({
-                    event: "AddMargin",
-                    params: {
-                        ammPair,
-                        marginToBeAdded: marginToBeAdded.toFixed(),
-                    },
-                })
-
-                const release = await this.nonceMutex.acquire()
-                let tx
-                try {
-                    tx = await this.perpService.addMargin(this.arbitrageur, amm.address, marginToBeAdded, {
-                        nonce: this.nextNonce,
-                        gasPrice: await this.ethService.getSafeGasPrice(),
+                if (marginToBeAdded.round(6, 0).gt(Big(0))) {
+                    this.log.jinfo({
+                        event: "AddMargin",
+                        params: {
+                            ammPair,
+                            marginToBeAdded: marginToBeAdded.toFixed(),
+                        },
                     })
-                    this.nextNonce++
-                } finally {
-                    release()
+
+                    const release = await this.nonceMutex.acquire()
+                    let tx
+                    try {
+                        tx = await this.perpService.addMargin(this.arbitrageur, amm.address, marginToBeAdded, {
+                            nonce: this.nextNonce,
+                            gasPrice: await this.ethService.getSafeGasPrice(),
+                        })
+                        this.nextNonce++
+                    } finally {
+                        release()
+                    }
+                    await tx.wait()
+                    this.log.jinfo({
+                        event: "MarginRatioAfter",
+                        params: {
+                            ammPair,
+                            marginRatio: (await this.perpService.getMarginRatio(amm.address, arbitrageurAddr)).toFixed(),
+                        },
+                    })
                 }
-                await tx.wait()
-                this.log.jinfo({
-                    event: "MarginRatioAfter",
-                    params: {
-                        ammPair,
-                        marginRatio: (await this.perpService.getMarginRatio(amm.address, arbitrageurAddr)).toFixed(),
-                    },
-                })
             }
         }
 
