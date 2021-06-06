@@ -52,6 +52,22 @@ export interface PositionCost {
     quoteAssetReserve: Big
 }
 
+export interface PositionChangedLog {
+    trader: string
+    amm: string
+    margin: Big
+    positionNotional: Big
+    exchangedPositionSize: Big
+    fee: Big
+    positionSizeAfter: Big
+    realizedPnl: Big
+    unrealizedPnlAfter: Big
+    badDebt: Big
+    liquidationPenalty: Big
+    spotPrice: Big
+    fundingPayment: Big
+}
+
 @Service()
 export class PerpService {
     private readonly log = Log.getLogger(PerpService.name)
@@ -176,6 +192,24 @@ export class PerpService {
         return {
             positionNotional: PerpService.fromWei(ret.positionNotional.d),
             unrealizedPnl: PerpService.fromWei(ret.unrealizedPnl.d),
+        }
+    }
+
+    toPositionChangedLog(log: any): PositionChangedLog {
+        return {
+            trader: log.trader,
+            amm: log.amm,
+            margin: PerpService.fromWei(log.margin),
+            positionNotional: PerpService.fromWei(log.positionNotional),
+            exchangedPositionSize: PerpService.fromWei(log.exchangedPositionSize),
+            fee: PerpService.fromWei(log.fee),
+            positionSizeAfter: PerpService.fromWei(log.positionSizeAfter),
+            realizedPnl: PerpService.fromWei(log.realizedPnl),
+            unrealizedPnlAfter: PerpService.fromWei(log.unrealizedPnlAfter),
+            badDebt: PerpService.fromWei(log.badDebt),
+            liquidationPenalty: PerpService.fromWei(log.liquidationPenalty),
+            spotPrice: PerpService.fromWei(log.spotPrice),
+            fundingPayment: PerpService.fromWei(log.fundingPayment),
         }
     }
 

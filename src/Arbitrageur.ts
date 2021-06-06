@@ -7,7 +7,7 @@ import { FtxService, PlaceOrderPayload } from "./FtxService"
 import { Log } from "./Log"
 import { MaxUint256 } from "@ethersproject/constants"
 import { Mutex } from "async-mutex"
-import { PerpService, Side, Position, PnlCalcOption, AmmProps } from "./PerpService"
+import { PerpService, Side, Position, PnlCalcOption, AmmProps, PositionChangedLog } from "./PerpService"
 import { preflightCheck, ammConfigMap, AmmConfig } from "./configs"
 import { ServerProfile } from "./ServerProfile"
 import { Service } from "typedi"
@@ -430,10 +430,8 @@ export class Arbitrageur {
                 return
             }
 
-            await Promise.all([
-                this.openFTXPosition(ammConfig.FTX_MARKET_ID, ftxPositionSizeAbs, Side.SELL),
-                this.openPerpFiPosition(amm, ammPair, regAmount, ammConfig.PERPFI_LEVERAGE, Side.BUY),
-            ])
+            const positionChangedLog = await this.openPerpFiPosition(amm, ammPair, regAmount, ammConfig.PERPFI_LEVERAGE, Side.BUY)
+            await this.openFTXPosition(ammConfig.FTX_MARKET_ID, positionChangedLog.exchangedPositionSize.abs(), Side.SELL)
         } else if (spread.gt(ammConfig.PERPFI_SHORT_ENTRY_TRIGGER)) {
             const regAmount = this.calculateRegulatedPositionNotional(ammConfig, quoteBalance, amount, position, Side.SELL)
             const ftxPositionSizeAbs = this.calculateFTXPositionSize(ammConfig, regAmount, ftxPrice)
@@ -441,10 +439,8 @@ export class Arbitrageur {
                 return
             }
 
-            await Promise.all([
-                this.openFTXPosition(ammConfig.FTX_MARKET_ID, ftxPositionSizeAbs, Side.BUY),
-                this.openPerpFiPosition(amm, ammPair, regAmount, ammConfig.PERPFI_LEVERAGE, Side.SELL),
-            ])
+            const positionChangedLog = await this.openPerpFiPosition(amm, ammPair, regAmount, ammConfig.PERPFI_LEVERAGE, Side.SELL)
+            await this.openFTXPosition(ammConfig.FTX_MARKET_ID, positionChangedLog.exchangedPositionSize.abs(), Side.BUY)
         } else {
             this.log.jinfo({
                 event: "NotTriggered",
@@ -634,7 +630,7 @@ export class Arbitrageur {
         return targetAmountSq.sqrt().sub(quoteAssetReserve)
     }
 
-    private async openPerpFiPosition(amm: Amm, ammPair: string, quoteAssetAmount: Big, leverage: Big, side: Side): Promise<void> {
+    private async openPerpFiPosition(amm: Amm, ammPair: string, quoteAssetAmount: Big, leverage: Big, side: Side): Promise<PositionChangedLog> {
         const amount = quoteAssetAmount.div(leverage)
         const gasPrice = await this.ethService.getSafeGasPrice()
 
@@ -671,7 +667,14 @@ export class Arbitrageur {
                 nonce: tx.nonce,
             },
         })
-        await tx.wait()
+
+        // I'm not sure why that field `events` isn't defined in TransactionReceipt, but it does exist in the JS object.
+        // The field might be removed in the future?
+        // TODO: find another way to get `exchangedPositionSize`
+        const txReceipt = (await tx.wait()) as any
+        const event = txReceipt.events.filter((event: any) => event.event === "PositionChanged")[0]
+        const positionChangedLog = this.perpService.toPositionChangedLog(event.args)
+        return positionChangedLog
     }
 
     private async openFTXPosition(marketId: string, positionSizeAbs: Big, side: Side): Promise<void> {
