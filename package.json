@@ -10,7 +10,8 @@
         "clean": "rm -rf ./build ./.serverless ./nyc_output",
         "arbitrage": "env $(cat .env.production | grep -v '#' | xargs) ts-node --files src/index.ts",
         "invoke-local": "sls invoke local --stage production --function arbitrageur",
-        "deploy": "npm run build && sls deploy --aws-s3-accelerate --stage production"
+        "deploy": "npm run build && sls deploy --aws-s3-accelerate --stage production",
+        "fast-deploy": "npm run compile && sls deploy --aws-s3-accelerate --stage production"
     },
     "author": "",
     "license": "BSD-3-Clause",
