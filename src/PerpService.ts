@@ -225,13 +225,14 @@ export class PerpService {
         const clearingHouse = await this.createClearingHouse(trader)
 
         // if the tx gonna fail it will throw here
+        /*
         const gasEstimate = await clearingHouse.estimateGas.openPosition(
             ammAddr,
             side.valueOf(),
             { d: PerpService.toWei(quoteAssetAmount) },
             { d: PerpService.toWei(leverage) },
             { d: PerpService.toWei(minBaseAssetAmount) },
-        )
+        )*/
 
         const tx = await clearingHouse.functions.openPosition(
             ammAddr,
@@ -241,11 +242,7 @@ export class PerpService {
             { d: PerpService.toWei(minBaseAssetAmount) },
             {
                 // add a margin for gas limit since its estimation was sometimes too tight
-                gasLimit: BigNumber.from(
-                    Big(gasEstimate.toString())
-                        .mul(Big(1.2))
-                        .toFixed(0),
-                ),
+                gasLimit: 5_000_000,
                 ...overrides,
             },
         )
@@ -259,7 +256,7 @@ export class PerpService {
                 leverage: +leverage,
                 minBaseAssetAmount: +minBaseAssetAmount,
                 txHash: tx.hash,
-                gasPrice: tx.gasPrice.toString(),
+                gasPrice: tx.gasPrice?.toString(),
                 nonce: tx.nonce,
             },
         })
@@ -278,7 +275,7 @@ export class PerpService {
             ammAddr,
             { d: PerpService.toWei(minBaseAssetAmount) },
             {
-                gasLimit: 1_500_000,
+                gasLimit: 5_000_000,
                 ...overrides,
             },
         )
@@ -288,7 +285,7 @@ export class PerpService {
                 trader: trader.address,
                 amm: ammAddr,
                 txHash: tx.hash,
-                gasPrice: tx.gasPrice.toString(),
+                gasPrice: tx.gasPrice?.toString(),
                 nonce: tx.nonce,
             },
         })
@@ -307,7 +304,7 @@ export class PerpService {
             ammAddr,
             { d: PerpService.toWei(marginToBeRemoved) },
             {
-                gasLimit: 1_500_000,
+                gasLimit: 5_000_000,
                 ...overrides,
             },
         )
@@ -318,7 +315,7 @@ export class PerpService {
                 amm: ammAddr,
                 marginToBeRemoved: +marginToBeRemoved.toFixed(),
                 txHash: tx.hash,
-                gasPrice: tx.gasPrice.toString(),
+                gasPrice: tx.gasPrice?.toString(),
                 nonce: tx.nonce,
             },
         })
@@ -336,7 +333,7 @@ export class PerpService {
             ammAddr,
             { d: PerpService.toWei(marginToBeAdded) },
             {
-                gasLimit: 1_500_000,
+                gasLimit: 5_000_000,
                 ...overrides,
             },
         )
@@ -347,7 +344,7 @@ export class PerpService {
                 amm: ammAddr,
                 marginToBeRemoved: +marginToBeAdded.toFixed(),
                 txHash: tx.hash,
-                gasPrice: tx.gasPrice.toString(),
+                gasPrice: tx.gasPrice?.toString(),
                 nonce: tx.nonce,
             },
         })
@@ -356,7 +353,9 @@ export class PerpService {
 
     async getUnrealizedPnl(ammAddr: string, traderAddr: string, pnlCalOption: PnlCalcOption): Promise<Big> {
         const clearingHouseViewer = await this.createClearingHouseViewer()
-        const unrealizedPnl = (await clearingHouseViewer.functions.getUnrealizedPnl(ammAddr, traderAddr, BigNumber.from(pnlCalOption)))[0]
+        const unrealizedPnl = (
+            await clearingHouseViewer.functions.getUnrealizedPnl(ammAddr, traderAddr, BigNumber.from(pnlCalOption))
+        )[0]
         return Big(PerpService.fromWei(unrealizedPnl.d))
     }
 
