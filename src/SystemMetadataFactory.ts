@@ -1,7 +1,8 @@
+import fetch from "node-fetch"
+import { Service } from "typedi"
+
 import { Log } from "./Log"
 import { ServerProfile } from "./ServerProfile"
-import { Service } from "typedi"
-import fetch from "node-fetch"
 
 @Service()
 export class SystemMetadataFactory {

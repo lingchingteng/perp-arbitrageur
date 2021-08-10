@@ -1,4 +1,4 @@
-import { getLogger, Logger } from "log4js"
+import { Logger, getLogger } from "log4js"
 
 enum Level {
     TRACE = "TRACE",
