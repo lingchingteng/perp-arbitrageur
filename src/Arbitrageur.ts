@@ -1,6 +1,7 @@
 import "./init"
 import { Amm } from "../types/ethers"
 import { ERC20Service } from "./ERC20Service"
+import { parseBytes32String } from "@ethersproject/strings"
 import { EthMetadata, SystemMetadataFactory } from "./SystemMetadataFactory"
 import { EthService } from "./EthService"
 import { FtxService, PlaceOrderPayload } from "./FtxService"
@@ -73,8 +74,9 @@ export class Arbitrageur {
         this.log.jinfo({
             event: "LatestBlock",
             params: {
-                latestBlockNumber, diffNowSeconds,
-            }
+                latestBlockNumber,
+                diffNowSeconds,
+            },
         })
         if (diffNowSeconds > preflightCheck.BLOCK_TIMESTAMP_FRESHNESS_THRESHOLD) {
             throw new Error("Get stale block")
@@ -293,32 +295,51 @@ export class Arbitrageur {
             }
         }
 
-        // Adjust Perpetual Protocol margin
-        if (!position.size.eq(0)) {
+        // Adjust PERP margin
+        //   marginRatio = (margin + unrealizedPnl - fundingPayment) / positionNotional
+        //
+        //   expectedMarginRatio = (margin + unrealizedPnl - fundingPayment + marginToChange) / positionNotional
+        //
+        //   expectedMarginRatio * positionNotional = margin + unrealizedPnl - fundingPayment + marginToChange
+        //
+        //   marginToChange = expectedMarginRatio * positionNotional - (margin - fundingPayment) - unrealizedPnl
+
+        // since we never fully close the position, there could be edge cases when the position is extremely small
+        // and the margin calculation could be off due to lack of decimal precision. so we want to ignore tiny positions.
+        // Note 6-decimal is chosen because we can fairly assume there would be no meaningful positions below this size.
+        if (position.size.abs().gte("0.000001")) {
             const marginRatio = await this.perpService.getMarginRatio(amm.address, arbitrageurAddr)
             // note positionNotional is an estimation because the real margin ratio is calculated based on two mark price candidates: SPOT & TWAP.
             // we pick the more "conservative" one (SPOT) here so the margin required tends to fall on the safer side
-            const {
-                positionNotional: spotPositionNotional,
-            } = await this.perpService.getPositionNotionalAndUnrealizedPnl(
-                amm.address,
-                this.arbitrageur.address,
-                PnlCalcOption.SPOT_PRICE,
-            )
+            const priceFeedKey = parseBytes32String(await amm.priceFeedKey())
+            const { unrealizedPnl: spotUnrealizedPnl, positionNotional: spotPositionNotional } =
+                await this.perpService.getPositionNotionalAndUnrealizedPnl(
+                    amm.address,
+                    this.arbitrageur.address,
+                    PnlCalcOption.SPOT_PRICE,
+                )
+            const expectedMarginRatio = new Big(1).div(ammConfig.PERPFI_LEVERAGE)
+            const marginToChange = expectedMarginRatio
+                .mul(spotPositionNotional)
+                .sub(position.margin) // funding payment already included
+                .sub(spotUnrealizedPnl)
             this.log.jinfo({
                 event: "MarginRatioBefore",
                 params: {
-                    marginRatio: +marginRatio,
-                    spotPositionNotional: +spotPositionNotional,
+                    amm: amm.address,
                     ammPair,
+                    baseAssetSymbol: priceFeedKey,
+                    expectedMarginRatio: +expectedMarginRatio,
+                    marginRatio: +marginRatio,
+                    margin: +position.margin,
+                    spotUnrealizedPnl: +spotUnrealizedPnl,
+                    spotPositionNotional: +spotPositionNotional,
+                    marginToChange: +marginToChange,
                 },
             })
-            const expectedMarginRatio = new Big(1).div(ammConfig.PERPFI_LEVERAGE)
-            if (marginRatio.gt(expectedMarginRatio.mul(new Big(1).add(ammConfig.ADJUST_MARGIN_RATIO_THRESHOLD)))) {
-                // marginToBeRemoved = -marginToChange
-                //                   = (marginRatio - expectedMarginRatio) * positionNotional
-                let marginToBeRemoved = marginRatio.sub(expectedMarginRatio).mul(spotPositionNotional)
 
+            if (marginRatio.gt(expectedMarginRatio.mul(new Big(1).add(ammConfig.ADJUST_MARGIN_RATIO_THRESHOLD)))) {
+                let marginToBeRemoved = marginToChange.mul(-1)
                 // cap the reduction by the current (funding payment realized) margin
                 if (marginToBeRemoved.gt(position.margin)) {
                     marginToBeRemoved = position.margin
@@ -329,6 +350,7 @@ export class Arbitrageur {
                         params: {
                             ammPair,
                             marginToBeRemoved: +marginToBeRemoved,
+                            baseAssetSymbol: priceFeedKey,
                         },
                     })
 
@@ -351,15 +373,14 @@ export class Arbitrageur {
                             marginRatio: (
                                 await this.perpService.getMarginRatio(amm.address, arbitrageurAddr)
                             ).toFixed(),
+                            baseAssetSymbol: priceFeedKey,
                         },
                     })
                 }
             } else if (
                 marginRatio.lt(expectedMarginRatio.mul(new Big(1).sub(ammConfig.ADJUST_MARGIN_RATIO_THRESHOLD)))
             ) {
-                // marginToBeAdded = marginToChange
-                //                 = (expectedMarginRatio - marginRatio) * positionNotional
-                let marginToBeAdded = expectedMarginRatio.sub(marginRatio).mul(spotPositionNotional)
+                let marginToBeAdded = marginToChange
                 marginToBeAdded = marginToBeAdded.gt(quoteBalance) ? quoteBalance : marginToBeAdded
                 if (marginToBeAdded.round(6, 0).gt(Big(0))) {
                     this.log.jinfo({
@@ -367,6 +388,7 @@ export class Arbitrageur {
                         params: {
                             ammPair,
                             marginToBeAdded: marginToBeAdded.toFixed(),
+                            baseAssetSymbol: priceFeedKey,
                         },
                     })
 
@@ -386,7 +408,10 @@ export class Arbitrageur {
                         event: "MarginRatioAfter",
                         params: {
                             ammPair,
-                            marginRatio: (await this.perpService.getMarginRatio(amm.address, arbitrageurAddr)).toFixed(),
+                            marginRatio: (
+                                await this.perpService.getMarginRatio(amm.address, arbitrageurAddr)
+                            ).toFixed(),
+                            baseAssetSymbol: priceFeedKey,
                         },
                     })
                 }
@@ -397,10 +422,7 @@ export class Arbitrageur {
         // we will leave it as is and not do any rebalance work
 
         // Fetch prices
-        const [ammPrice, ftxPrice] = await Promise.all([
-            this.fetchAmmPrice(amm),
-            this.fetchFtxPrice(ammConfig),
-        ])
+        const [ammPrice, ftxPrice] = await Promise.all([this.fetchAmmPrice(amm), this.fetchFtxPrice(ammConfig)])
 
         // Calculate spread
         // NOTE We assume FTX liquidity is always larger than Perpetual Protocol,
@@ -424,29 +446,61 @@ export class Arbitrageur {
 
         // Open positions if needed
         if (spread.lt(ammConfig.PERPFI_LONG_ENTRY_TRIGGER)) {
-            const regAmount = this.calculateRegulatedPositionNotional(ammConfig, quoteBalance, amount, position, Side.BUY)
+            const regAmount = this.calculateRegulatedPositionNotional(
+                ammConfig,
+                quoteBalance,
+                amount,
+                position,
+                Side.BUY,
+            )
             const ftxPositionSizeAbs = this.calculateFTXPositionSize(ammConfig, regAmount, ftxPrice)
             if (ftxPositionSizeAbs.eq(Big(0))) {
                 return
             }
 
-            const positionChangedLog = await this.openPerpFiPosition(amm, ammPair, regAmount, ammConfig.PERPFI_LEVERAGE, Side.BUY)
-            await this.openFTXPosition(ammConfig.FTX_MARKET_ID, positionChangedLog.exchangedPositionSize.abs(), Side.SELL)
+            const positionChangedLog = await this.openPerpFiPosition(
+                amm,
+                ammPair,
+                regAmount,
+                ammConfig.PERPFI_LEVERAGE,
+                Side.BUY,
+            )
+            await this.openFTXPosition(
+                ammConfig.FTX_MARKET_ID,
+                positionChangedLog.exchangedPositionSize.abs(),
+                Side.SELL,
+            )
         } else if (spread.gt(ammConfig.PERPFI_SHORT_ENTRY_TRIGGER)) {
-            const regAmount = this.calculateRegulatedPositionNotional(ammConfig, quoteBalance, amount, position, Side.SELL)
+            const regAmount = this.calculateRegulatedPositionNotional(
+                ammConfig,
+                quoteBalance,
+                amount,
+                position,
+                Side.SELL,
+            )
             const ftxPositionSizeAbs = this.calculateFTXPositionSize(ammConfig, regAmount, ftxPrice)
             if (ftxPositionSizeAbs.eq(Big(0))) {
                 return
             }
 
-            const positionChangedLog = await this.openPerpFiPosition(amm, ammPair, regAmount, ammConfig.PERPFI_LEVERAGE, Side.SELL)
-            await this.openFTXPosition(ammConfig.FTX_MARKET_ID, positionChangedLog.exchangedPositionSize.abs(), Side.BUY)
+            const positionChangedLog = await this.openPerpFiPosition(
+                amm,
+                ammPair,
+                regAmount,
+                ammConfig.PERPFI_LEVERAGE,
+                Side.SELL,
+            )
+            await this.openFTXPosition(
+                ammConfig.FTX_MARKET_ID,
+                positionChangedLog.exchangedPositionSize.abs(),
+                Side.BUY,
+            )
         } else {
             this.log.jinfo({
                 event: "NotTriggered",
                 params: {
                     spread,
-                    ammConfig
+                    ammConfig,
                 },
             })
         }
@@ -483,7 +537,13 @@ export class Arbitrageur {
         return ftxPrice
     }
 
-    calculateRegulatedPositionNotional(ammConfig: AmmConfig, quoteBalance: Big, maxSlippageAmount: Big, position: Position, side: Side): Big {
+    calculateRegulatedPositionNotional(
+        ammConfig: AmmConfig,
+        quoteBalance: Big,
+        maxSlippageAmount: Big,
+        position: Position,
+        side: Side,
+    ): Big {
         let maxOpenNotional = Big(0)
 
         // Example
@@ -594,10 +654,7 @@ export class Arbitrageur {
     }
 
     calculateFTXPositionSize(ammConfig: AmmConfig, perpFiRegulatedPositionNotional: Big, ftxPrice: Big): Big {
-        let ftxPositionSizeAbs = perpFiRegulatedPositionNotional
-            .div(ftxPrice)
-            .abs()
-            .round(3) // round to FTX decimals
+        let ftxPositionSizeAbs = perpFiRegulatedPositionNotional.div(ftxPrice).abs().round(3) // round to FTX decimals
         if (ftxPositionSizeAbs.lt(ammConfig.FTX_MIN_TRADE_SIZE)) {
             ftxPositionSizeAbs = Big(0)
             this.log.jinfo({
@@ -615,40 +672,31 @@ export class Arbitrageur {
         // quoteAssetNeeded = sqrt(quoteAssetReserve * baseAssetReserve * price) - quoteAssetReserve
         const ammPrice = quoteAssetReserve.div(baseAssetReserve)
         if (ammPrice.eq(price)) return Big(0)
-        return quoteAssetReserve
-            .mul(baseAssetReserve)
-            .mul(price)
-            .sqrt()
-            .minus(quoteAssetReserve)
+        return quoteAssetReserve.mul(baseAssetReserve).mul(price).sqrt().minus(quoteAssetReserve)
     }
 
     static calcMaxSlippageAmount(ammPrice: Big, maxSlippage: Big, baseAssetReserve: Big, quoteAssetReserve: Big): Big {
-        const targetAmountSq = ammPrice
-            .mul(new Big(1).add(maxSlippage))
-            .mul(baseAssetReserve)
-            .mul(quoteAssetReserve)
+        const targetAmountSq = ammPrice.mul(new Big(1).add(maxSlippage)).mul(baseAssetReserve).mul(quoteAssetReserve)
         return targetAmountSq.sqrt().sub(quoteAssetReserve)
     }
 
-    private async openPerpFiPosition(amm: Amm, ammPair: string, quoteAssetAmount: Big, leverage: Big, side: Side): Promise<PositionChangedLog> {
+    private async openPerpFiPosition(
+        amm: Amm,
+        ammPair: string,
+        quoteAssetAmount: Big,
+        leverage: Big,
+        side: Side,
+    ): Promise<PositionChangedLog> {
         const amount = quoteAssetAmount.div(leverage)
         const gasPrice = await this.ethService.getSafeGasPrice()
 
         const release = await this.nonceMutex.acquire()
         let tx
         try {
-            tx = await this.perpService.openPosition(
-                this.arbitrageur,
-                amm.address,
-                side,
-                amount,
-                leverage,
-                Big(0),
-                {
-                    nonce: this.nextNonce,
-                    gasPrice,
-                },
-            )
+            tx = await this.perpService.openPosition(this.arbitrageur, amm.address, side, amount, leverage, Big(0), {
+                nonce: this.nextNonce,
+                gasPrice,
+            })
             this.nextNonce++
         } finally {
             release()
