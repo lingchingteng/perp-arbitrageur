@@ -1,7 +1,6 @@
 import fetch from "node-fetch"
 import { Service } from "typedi"
 
-import { Log } from "./Log"
 import { ServerProfile } from "./ServerProfile"
 
 @Service()
