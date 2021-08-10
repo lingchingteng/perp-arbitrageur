@@ -108,6 +108,30 @@ export class Arbitrageur {
             return
         }
 
+        // get all Amm info
+        const systemMetadata = await this.systemMetadataFactory.fetch()
+        const amms = await this.perpService.getAllOpenAmms()
+
+        // maintain margin on all amm
+        await Promise.all(
+            amms.map(async amm => {
+                try {
+                    return await this.adjustMarginAmm(amm)
+                } catch (e) {
+                    this.log.jinfo({
+                        event: "AdjustMarginAmmFailed",
+                        params: {
+                            amm: amm.address,
+                            reason: e.toString(),
+                            stack: e.stack,
+                            response: e.response,
+                        },
+                    })
+                    return
+                }
+            }),
+        )
+
         // Fetch FTX account info
         const ftxAccountInfo = await this.ftxService.getAccountInfo(this.ftxClient)
 
@@ -153,9 +177,6 @@ export class Arbitrageur {
         }
 
         // Check all Perpetual Protocol AMMs
-        const systemMetadata = await this.systemMetadataFactory.fetch()
-        const amms = await this.perpService.getAllOpenAmms()
-
         await Promise.all(
             amms.map(async amm => {
                 try {
@@ -176,28 +197,43 @@ export class Arbitrageur {
         await this.calculateTotalValue(amms)
     }
 
-    async arbitrageAmm(amm: Amm, systemMetadata: EthMetadata): Promise<void> {
-        const ammState = await this.perpService.getAmmStates(amm.address)
-        const ammPair = this.getAmmPair(ammState)
+    async validateAmm(ammAddr: string): Promise<{ ammPair: string; ammConfig: AmmConfig }> {
+        const ammState = await this.perpService.getAmmStates(ammAddr)
+        const ammPair = await this.getAmmPair(ammState)
         const ammConfig = ammConfigMap[ammPair]
 
         if (!ammConfig) {
-            this.log.jinfo({
+            // do it asynchronously so it is not blocked by outage
+            this.log.jwarn({
                 event: "AmmConfigMissing",
                 params: {
-                    amm: amm.address,
+                    amm: ammAddr,
                     ammPair,
                 },
             })
-            return
+            throw new Error("ValidateAmmFailed: missing config")
         }
 
         if (!ammConfig.ENABLED) {
-            return
+            this.log.jinfo({
+                event: "DisabledAmm",
+                params: {
+                    amm: ammAddr,
+                    ammConfig,
+                    ammPair,
+                },
+            })
+            throw new Error("ValidateAmmFailed: Amm disabled")
         }
 
+        return { ammPair, ammConfig }
+    }
+
+    async adjustMarginAmm(amm: Amm) {
+        const { ammPair, ammConfig } = await this.validateAmm(amm.address)
+
         this.log.jinfo({
-            event: "ArbitrageAmm",
+            event: "AdjustMarginAmm",
             params: {
                 amm: amm.address,
                 ammConfig,
@@ -206,95 +242,10 @@ export class Arbitrageur {
         })
 
         const arbitrageurAddr = this.arbitrageur.address
-        const clearingHouseAddr = systemMetadata.clearingHouseAddr
+        const priceFeedKey = parseBytes32String(await amm.priceFeedKey())
         const quoteAssetAddr = await amm.quoteAsset()
-
-        // Check Perpetual Protocol balance - quote asset is USDC
         const quoteBalance = await this.erc20Service.balanceOf(quoteAssetAddr, arbitrageurAddr)
-        if (quoteBalance.lt(preflightCheck.USDC_BALANCE_THRESHOLD)) {
-            this.log.jwarn({
-                event: "QuoteAssetNotEnough",
-                params: { balance: quoteBalance.toFixed() },
-            })
-            // NOTE we don't abort prematurely here because we don't know yet which direction
-            // the arbitrageur will go. If it's the opposite then it doesn't need more quote asset to execute
-        }
-
-        this.perpfiBalance = quoteBalance
-
-        // Make sure the quote asset are approved
-        const allowance = await this.erc20Service.allowance(quoteAssetAddr, arbitrageurAddr, clearingHouseAddr)
-        const infiniteAllowance = await this.erc20Service.fromScaled(quoteAssetAddr, MaxUint256)
-        const allowanceThreshold = infiniteAllowance.div(2)
-        if (allowance.lt(allowanceThreshold)) {
-            await this.erc20Service.approve(quoteAssetAddr, clearingHouseAddr, infiniteAllowance, this.arbitrageur, {
-                gasPrice: await this.ethService.getSafeGasPrice(),
-            })
-            this.log.jinfo({
-                event: "SetMaxAllowance",
-                params: {
-                    quoteAssetAddr: quoteAssetAddr,
-                    owner: this.arbitrageur.address,
-                    agent: clearingHouseAddr,
-                },
-            })
-        }
-
-        // List Perpetual Protocol positions
-        const [position, unrealizedPnl] = await Promise.all([
-            this.perpService.getPersonalPositionWithFundingPayment(amm.address, this.arbitrageur.address),
-            this.perpService.getUnrealizedPnl(amm.address, this.arbitrageur.address, PnlCalcOption.SPOT_PRICE),
-        ])
-
-        this.log.jinfo({
-            event: "PerpFiPosition",
-            params: {
-                ammPair,
-                size: +position.size,
-                margin: +position.margin,
-                openNotional: +position.openNotional,
-            },
-        })
-
-        this.log.jinfo({
-            event: "PerpFiPnL",
-            params: {
-                ammPair,
-                margin: +position.margin,
-                unrealizedPnl: +unrealizedPnl,
-                quoteBalance: +quoteBalance,
-                accountValue: +position.margin.add(unrealizedPnl).add(quoteBalance),
-            },
-        })
-
-        // List FTX positions
-        const ftxPosition = await this.ftxService.getPosition(this.ftxClient, ammConfig.FTX_MARKET_ID)
-        if (ftxPosition) {
-            const ftxSizeDiff = ftxPosition.netSize.abs().sub(position.size.abs())
-            this.log.jinfo({
-                event: "FtxPosition",
-                params: {
-                    marketId: ftxPosition.future,
-                    size: +ftxPosition.netSize,
-                    diff: +ftxSizeDiff,
-                },
-            })
-
-            if (ftxSizeDiff.abs().gte(ammConfig.FTX_MIN_TRADE_SIZE)) {
-                const mitigation = FtxService.mitigatePositionSizeDiff(position.size, ftxPosition.netSize)
-                this.log.jinfo({
-                    event: "MitigateFTXPositionSizeDiff",
-                    params: {
-                        perpfiPositionSize: position.size,
-                        ftxPositionSize: ftxPosition.netSize,
-                        size: mitigation.sizeAbs,
-                        side: mitigation.side,
-                    },
-                })
-                await this.openFTXPosition(ammConfig.FTX_MARKET_ID, mitigation.sizeAbs, mitigation.side)
-            }
-        }
-
+        const position = await this.perpService.getPersonalPositionWithFundingPayment(amm.address, arbitrageurAddr)
         // Adjust PERP margin
         //   marginRatio = (margin + unrealizedPnl - fundingPayment) / positionNotional
         //
@@ -311,7 +262,6 @@ export class Arbitrageur {
             const marginRatio = await this.perpService.getMarginRatio(amm.address, arbitrageurAddr)
             // note positionNotional is an estimation because the real margin ratio is calculated based on two mark price candidates: SPOT & TWAP.
             // we pick the more "conservative" one (SPOT) here so the margin required tends to fall on the safer side
-            const priceFeedKey = parseBytes32String(await amm.priceFeedKey())
             const { unrealizedPnl: spotUnrealizedPnl, positionNotional: spotPositionNotional } =
                 await this.perpService.getPositionNotionalAndUnrealizedPnl(
                     amm.address,
@@ -415,6 +365,108 @@ export class Arbitrageur {
                         },
                     })
                 }
+            }
+        }
+    }
+    async arbitrageAmm(amm: Amm, systemMetadata: EthMetadata): Promise<void> {
+        const ammState = await this.perpService.getAmmStates(amm.address)
+        const { ammPair, ammConfig } = await this.validateAmm(amm.address)
+        this.log.jinfo({
+            event: "ArbitrageAmm",
+            params: {
+                amm: amm.address,
+                ammConfig,
+                ammPair,
+            },
+        })
+
+        const arbitrageurAddr = this.arbitrageur.address
+        const clearingHouseAddr = systemMetadata.clearingHouseAddr
+        const quoteAssetAddr = await amm.quoteAsset()
+
+        // Check Perpetual Protocol balance - quote asset is USDC
+        const quoteBalance = await this.erc20Service.balanceOf(quoteAssetAddr, arbitrageurAddr)
+        if (quoteBalance.lt(preflightCheck.USDC_BALANCE_THRESHOLD)) {
+            this.log.jwarn({
+                event: "QuoteAssetNotEnough",
+                params: { balance: quoteBalance.toFixed() },
+            })
+            // NOTE we don't abort prematurely here because we don't know yet which direction
+            // the arbitrageur will go. If it's the opposite then it doesn't need more quote asset to execute
+        }
+
+        this.perpfiBalance = quoteBalance
+
+        // Make sure the quote asset are approved
+        const allowance = await this.erc20Service.allowance(quoteAssetAddr, arbitrageurAddr, clearingHouseAddr)
+        const infiniteAllowance = await this.erc20Service.fromScaled(quoteAssetAddr, MaxUint256)
+        const allowanceThreshold = infiniteAllowance.div(2)
+        if (allowance.lt(allowanceThreshold)) {
+            await this.erc20Service.approve(quoteAssetAddr, clearingHouseAddr, infiniteAllowance, this.arbitrageur, {
+                gasPrice: await this.ethService.getSafeGasPrice(),
+            })
+            this.log.jinfo({
+                event: "SetMaxAllowance",
+                params: {
+                    quoteAssetAddr: quoteAssetAddr,
+                    owner: this.arbitrageur.address,
+                    agent: clearingHouseAddr,
+                },
+            })
+        }
+
+        // List Perpetual Protocol positions
+        const [position, unrealizedPnl] = await Promise.all([
+            this.perpService.getPersonalPositionWithFundingPayment(amm.address, this.arbitrageur.address),
+            this.perpService.getUnrealizedPnl(amm.address, this.arbitrageur.address, PnlCalcOption.SPOT_PRICE),
+        ])
+
+        this.log.jinfo({
+            event: "PerpFiPosition",
+            params: {
+                ammPair,
+                size: +position.size,
+                margin: +position.margin,
+                openNotional: +position.openNotional,
+            },
+        })
+
+        this.log.jinfo({
+            event: "PerpFiPnL",
+            params: {
+                ammPair,
+                margin: +position.margin,
+                unrealizedPnl: +unrealizedPnl,
+                quoteBalance: +quoteBalance,
+                accountValue: +position.margin.add(unrealizedPnl).add(quoteBalance),
+            },
+        })
+
+        // List FTX positions
+        const ftxPosition = await this.ftxService.getPosition(this.ftxClient, ammConfig.FTX_MARKET_ID)
+        if (ftxPosition) {
+            const ftxSizeDiff = ftxPosition.netSize.abs().sub(position.size.abs())
+            this.log.jinfo({
+                event: "FtxPosition",
+                params: {
+                    marketId: ftxPosition.future,
+                    size: +ftxPosition.netSize,
+                    diff: +ftxSizeDiff,
+                },
+            })
+
+            if (ftxSizeDiff.abs().gte(ammConfig.FTX_MIN_TRADE_SIZE)) {
+                const mitigation = FtxService.mitigatePositionSizeDiff(position.size, ftxPosition.netSize)
+                this.log.jinfo({
+                    event: "MitigateFTXPositionSizeDiff",
+                    params: {
+                        perpfiPositionSize: position.size,
+                        ftxPositionSize: ftxPosition.netSize,
+                        size: mitigation.sizeAbs,
+                        side: mitigation.side,
+                    },
+                })
+                await this.openFTXPosition(ammConfig.FTX_MARKET_ID, mitigation.sizeAbs, mitigation.side)
             }
         }
 
