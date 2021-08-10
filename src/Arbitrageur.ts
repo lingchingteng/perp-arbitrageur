@@ -14,6 +14,7 @@ import { ServerProfile } from "./ServerProfile"
 import { Service } from "typedi"
 import { Wallet } from "ethers"
 import Big from "big.js"
+import { min } from "./functions"
 import FTXRest from "ftx-api-rest"
 
 @Service()
@@ -496,10 +497,24 @@ export class Arbitrageur {
             },
         })
 
+        const maxHoldingBaseAsset = PerpService.fromWei((await amm.getMaxHoldingBaseAsset()).d) // aka personal cap
+        let maxHoldingBaseAssetLeft = maxHoldingBaseAsset.sub(position.size.abs())
+        maxHoldingBaseAssetLeft = maxHoldingBaseAssetLeft.lt(0) ? Big(0) : maxHoldingBaseAssetLeft // this might happen if somehow we reduce the personal cap
+        this.log.jinfo({
+            event: "PerpFiPersonalCap",
+            params: {
+                ammPair,
+                maxHoldingBaseAssetLeft: +maxHoldingBaseAssetLeft,
+                maxHoldingBaseAsset: +maxHoldingBaseAsset,
+                currentPositionSize: +position.size,
+            },
+        })
         // Open positions if needed
         if (spread.lt(ammConfig.PERPFI_LONG_ENTRY_TRIGGER)) {
             const regAmount = this.calculateRegulatedPositionNotional(
                 ammConfig,
+                ammPrice,
+                maxHoldingBaseAsset,
                 quoteBalance,
                 amount,
                 position,
@@ -525,6 +540,8 @@ export class Arbitrageur {
         } else if (spread.gt(ammConfig.PERPFI_SHORT_ENTRY_TRIGGER)) {
             const regAmount = this.calculateRegulatedPositionNotional(
                 ammConfig,
+                ammPrice,
+                maxHoldingBaseAsset,
                 quoteBalance,
                 amount,
                 position,
@@ -591,11 +608,15 @@ export class Arbitrageur {
 
     calculateRegulatedPositionNotional(
         ammConfig: AmmConfig,
+        ammPrice: Big,
+        maxHoldingBaseAsset: Big,
         quoteBalance: Big,
         maxSlippageAmount: Big,
         position: Position,
         side: Side,
     ): Big {
+        const personalCapInQuote = maxHoldingBaseAsset.mul(ammPrice).mul(1 - 5 / 100) // set a loose personal cap due to slippage
+        const cap = min([ammConfig.ASSET_CAP, personalCapInQuote])
         let maxOpenNotional = Big(0)
 
         // Example
@@ -603,7 +624,7 @@ export class Arbitrageur {
         // you have long position notional >> 900
         // you can short >> 1900 maximum
         if (position.size.gte(0) && side == Side.SELL) {
-            maxOpenNotional = ammConfig.ASSET_CAP.add(position.openNotional)
+            maxOpenNotional = position.openNotional.add(cap)
         }
 
         // Example
@@ -611,7 +632,7 @@ export class Arbitrageur {
         // you have short position notional >> 900
         // you can long >> 1900 maximum
         else if (position.size.lte(0) && side == Side.BUY) {
-            maxOpenNotional = ammConfig.ASSET_CAP.add(position.openNotional)
+            maxOpenNotional = position.openNotional.add(cap)
         }
 
         // Example
@@ -619,7 +640,7 @@ export class Arbitrageur {
         // you have long position notional >> 900
         // you can long >> 100 maximum
         else if (position.size.gte(0) && side == Side.BUY) {
-            maxOpenNotional = ammConfig.ASSET_CAP.sub(position.openNotional)
+            maxOpenNotional = cap.sub(position.openNotional)
             if (maxOpenNotional.lt(0)) {
                 maxOpenNotional = Big(0)
             }
@@ -630,7 +651,7 @@ export class Arbitrageur {
         // you have short position notional >> 900
         // you can short >> 100 maximum
         else if (position.size.lte(0) && side == Side.SELL) {
-            maxOpenNotional = ammConfig.ASSET_CAP.sub(position.openNotional)
+            maxOpenNotional = cap.sub(position.openNotional)
             if (maxOpenNotional.lt(0)) {
                 maxOpenNotional = Big(0)
             }
@@ -649,6 +670,9 @@ export class Arbitrageur {
                     maxSlippageAmount: +maxSlippageAmount,
                     maxOpenNotional: +maxOpenNotional,
                     amount: +amount,
+                    cap: +cap,
+                    assetCap: +ammConfig.ASSET_CAP,
+                    personalCapInQuote: +personalCapInQuote,
                 },
             })
         }
@@ -671,6 +695,9 @@ export class Arbitrageur {
                     maxOpenNotional: +maxOpenNotional,
                     feeSafetyMargin: +feeSafetyMargin,
                     amount: +amount,
+                    cap: +cap,
+                    assetCap: +ammConfig.ASSET_CAP,
+                    personalCapInQuote: +personalCapInQuote,
                 },
             })
         } else if (amount.eq(Big(0))) {
@@ -685,6 +712,9 @@ export class Arbitrageur {
                     maxOpenNotional: +maxOpenNotional,
                     feeSafetyMargin: +feeSafetyMargin,
                     amount: +amount,
+                    cap: +cap,
+                    assetCap: +ammConfig.ASSET_CAP,
+                    personalCapInQuote: +personalCapInQuote,
                 },
             })
         } else {
@@ -699,6 +729,9 @@ export class Arbitrageur {
                     maxOpenNotional: +maxOpenNotional,
                     feeSafetyMargin: +feeSafetyMargin,
                     amount: +amount,
+                    cap: +cap,
+                    assetCap: +ammConfig.ASSET_CAP,
+                    personalCapInQuote: +personalCapInQuote,
                 },
             })
         }
