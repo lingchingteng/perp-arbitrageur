@@ -1,13 +1,13 @@
 import { BigNumber } from "@ethersproject/bignumber"
 import { Block, WebSocketProvider } from "@ethersproject/providers"
-import { ethers, Wallet } from "ethers"
-import { Log } from "./Log"
 import { parseUnits } from "@ethersproject/units"
-import { ServerProfile } from "./ServerProfile"
-import { Service } from "typedi"
-import { sleep } from "./util"
-import { TransactionReceipt, TransactionResponse } from "@ethersproject/abstract-provider"
 import Big from "big.js"
+import { Wallet, ethers } from "ethers"
+import { Service } from "typedi"
+
+import { Log } from "./Log"
+import { ServerProfile } from "./ServerProfile"
+import { sleep } from "./util"
 
 @Service()
 export class EthService {

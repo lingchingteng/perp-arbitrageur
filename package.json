@@ -39,6 +39,9 @@
         "@types/node-fetch": "2.5.7",
         "aws-sdk": "2.667.0",
         "dotenv": "8.2.0",
+        "import-sort-style-module": "^6.0.0",
+        "prettier": "^2.3.2",
+        "prettier-plugin-import-sort": "^0.0.7",
         "serverless": "1.69.0",
         "serverless-dotenv-plugin": "2.4.2",
         "serverless-offline": "6.1.4",
@@ -49,5 +52,11 @@
         "typedoc": "0.17.6",
         "typescript": "3.8.3",
         "webpack": "4.43.0"
+    },
+    "importSort": {
+        ".js, .jsx, .ts, .tsx": {
+            "style": "module",
+            "parser": "typescript"
+        }
     }
 }

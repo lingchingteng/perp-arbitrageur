@@ -1,9 +1,10 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { Log } from "./Log"
-import { Service } from "typedi"
-import { Side } from "./PerpService"
 import Big from "big.js"
 import fetch from "node-fetch"
+import { Service } from "typedi"
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { Log } from "./Log"
+import { Side } from "./PerpService"
 
 @Service()
 export class FtxService {
