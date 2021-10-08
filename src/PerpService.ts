@@ -257,7 +257,7 @@ export class PerpService {
                 leverage: +leverage,
                 minBaseAssetAmount: +minBaseAssetAmount,
                 txHash: tx.hash,
-                gasPrice: tx.gasPrice?.toString(),
+                gasPrice: tx.gasPrice ? tx.gasPrice.toString() : null,
                 nonce: tx.nonce,
             },
         })
@@ -286,7 +286,7 @@ export class PerpService {
                 trader: trader.address,
                 amm: ammAddr,
                 txHash: tx.hash,
-                gasPrice: tx.gasPrice?.toString(),
+                gasPrice: tx.gasPrice ? tx.gasPrice.toString() : null,
                 nonce: tx.nonce,
             },
         })
@@ -316,7 +316,7 @@ export class PerpService {
                 amm: ammAddr,
                 marginToBeRemoved: +marginToBeRemoved.toFixed(),
                 txHash: tx.hash,
-                gasPrice: tx.gasPrice?.toString(),
+                gasPrice: tx.gasPrice ? tx.gasPrice.toString() : null,
                 nonce: tx.nonce,
             },
         })
@@ -345,7 +345,7 @@ export class PerpService {
                 amm: ammAddr,
                 marginToBeRemoved: +marginToBeAdded.toFixed(),
                 txHash: tx.hash,
-                gasPrice: tx.gasPrice?.toString(),
+                gasPrice: tx.gasPrice ? tx.gasPrice.toString() : null,
                 nonce: tx.nonce,
             },
         })
