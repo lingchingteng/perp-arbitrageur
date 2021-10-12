@@ -28,6 +28,12 @@ $ npm install
 $ cp .env.production.sample .env.production
 $ cp src/configs.sample.ts src/configs.ts
 ```
+## Node
+⚠️ **Important** ⚠️ You will almost certainly need to rent a node, or deploy your own node for use with this bot. The node endpoint defined in `.env.production` must point to an xDai node. By default, xDai's [official endpoint](https://www.xdaichain.com/for-developers/developer-resources#json-rpc-endpoints) is used. **However, public WSS endpoints generally perform poorly for this purpose.** 
+
+There are options to rent nodes, e.g. [Quiknode](https://www.quiknode.io/), or look at [other options](https://www.xdaichain.com/for-developers/developer-resources#json-rpc-endpoints). Ethereum nodes **will not work**.
+
+Be sure to set all unused trading pairs as `ENABLED: false` in the configuration (see next section). This will greatly reduce unnecessary calls to your node.
 
 ## Configuration
 
@@ -44,7 +50,6 @@ FTX_API_SECRET=YOUR_FTX_API_SECRET
 # Set this to your FTX subacount name only if you're using a FTX subaccount
 # FTX_SUBACCOUNT=YOUR_FTX_SUBACCOUNT_NAME
 ```
-⚠️ **Note** ⚠️ the node endpoint defined in `.env.production` must point to an xDai node. By default, xDai's [official endpoint](https://www.xdaichain.com/for-developers/developer-resources#json-rpc-endpoints) is used. **However, public WSS endpoints have become unreliable in recent weeks.** You are recommended to use your own node, [Quiknode](https://www.quiknode.io/), or look at [other options](https://www.xdaichain.com/for-developers/developer-resources#json-rpc-endpoints). Ethereum nodes such as **Infura or Alchemy will not work**.
 
 Edit the trading parameters in `src/configs.ts`:
 
