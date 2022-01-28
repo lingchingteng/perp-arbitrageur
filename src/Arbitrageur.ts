@@ -315,10 +315,24 @@ export class Arbitrageur {
                             gasPrice: await this.ethService.getSafeGasPrice(),
                         })
                         this.nextNonce++
+                    } catch (e) {
+                        await this.log.jwarn({
+                            event: "RemoveMarginSentTxFailed",
+                            params: {
+                                ammPair,
+                                amm: amm.address,
+                                marginToBeRemoved: +marginToBeRemoved,
+                                reason: e.toString(),
+                            },
+                        })
                     } finally {
                         release()
                     }
-                    await tx.wait()
+
+                    if (tx) {
+                        await tx.wait()
+                    }
+
                     this.log.jinfo({
                         event: "MarginRatioAfter",
                         params: {

@@ -301,6 +301,14 @@ export class PerpService {
         overrides?: Overrides,
     ): Promise<TransactionResponse> {
         const clearingHouse = await this.createClearingHouse(trader)
+
+        // simulate the tx and make sure it will succeed
+        await clearingHouse.callStatic.removeMargin(
+          ammAddr,
+          { d: PerpService.toWei(marginToBeRemoved) },
+          overrides,
+        )
+
         const tx = await clearingHouse.functions.removeMargin(
             ammAddr,
             { d: PerpService.toWei(marginToBeRemoved) },
