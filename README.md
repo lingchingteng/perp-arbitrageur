@@ -1,9 +1,17 @@
+
+⚠️ **Deprecated**
+
+This code is for Perp v1, which is no longer active. Please reference the arbitrageur for Perp v2:
+
+<https://github.com/perpetual-protocol/perp-curie-arbitrageur>
+
 # perp-arbitrageur
+
 The `perp-arbitrageur` is an arbitrage bot that can be run on AWS Lambda (works with free tier) or locally. The bot allows you to execute automated trading strategies between Perpetual Protocol ([site](https://perp.fi/), [docs](https://docs.perp.fi/)) and FTX ([site](https://ftx.com/)).
 
 Since Perpetual Protocol runs on xDai, you can use this bot entirely without paying gas fees on Ethereum. Gas fees on xDai are very low (1 Gwei).
 
-⚠️ **Note** ⚠️ You may need to run an xDai node to operate this bot. Public nodes are not currently reliable for websocket applications.
+⚠️ **Note** - You may need to run an xDai node to operate this bot. Public nodes are not currently reliable for websocket applications.
 
 Comments or questions? Come to the #⛏coding-chat channel on our Discord: https://discord.gg/mYKKRTn
 
